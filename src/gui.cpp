@@ -1,6 +1,5 @@
 #include "src/gui.hpp"
 
-#include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -8,6 +7,78 @@
 #include <sys/types.h>
 
 namespace rgb_controller {
+
+static void show_all_recursive(GtkWidget* widget) {
+    if (!widget) return;
+    gtk_widget_show(widget);
+    gtk_widget_set_no_show_all(widget, FALSE);
+    if (GTK_IS_CONTAINER(widget)) {
+        GList* children = gtk_container_get_children(GTK_CONTAINER(widget));
+        for (GList* l = children; l; l = l->next) {
+            show_all_recursive(GTK_WIDGET(l->data));
+        }
+        g_list_free(children);
+    }
+}
+
+static void hide_editor_extras(GtkWidget* widget) {
+    if (!widget || !GTK_IS_CONTAINER(widget)) return;
+    GList* children = gtk_container_get_children(GTK_CONTAINER(widget));
+    bool first_color_scale_kept = false;
+    for (GList* l = children; l; l = l->next) {
+        GtkWidget* child = GTK_WIDGET(l->data);
+        const gchar* type_name = G_OBJECT_TYPE_NAME(child);
+        if (type_name && g_str_equal(type_name, "GtkColorScale")) {
+            if (!first_color_scale_kept) {
+                gtk_widget_hide(child);
+                first_color_scale_kept = true;
+            }
+        }
+        if (type_name && (g_str_equal(type_name, "GtkEntry") ||
+                          g_str_equal(type_name, "GtkColorSwatch") ||
+                          g_str_equal(type_name, "GtkButton"))) {
+            gtk_widget_hide(child);
+        }
+        if (GTK_IS_BOX(child)) {
+            GList* grandchildren = gtk_container_get_children(GTK_CONTAINER(child));
+            bool has_spinbutton = false;
+            for (GList* g = grandchildren; g; g = g->next) {
+                if (GTK_IS_GRID(g->data)) {
+                    GList* grid_children = gtk_container_get_children(GTK_CONTAINER(g->data));
+                    for (GList* gc = grid_children; gc; gc = gc->next) {
+                        if (GTK_IS_SPIN_BUTTON(gc->data)) {
+                            has_spinbutton = true;
+                            break;
+                        }
+                    }
+                    g_list_free(grid_children);
+                }
+            }
+            g_list_free(grandchildren);
+            if (has_spinbutton) {
+                gtk_widget_hide(child);
+            }
+        }
+        hide_editor_extras(child);
+    }
+    g_list_free(children);
+}
+
+static void show_editor_only(GtkWidget* widget) {
+    if (!widget || !GTK_IS_CONTAINER(widget)) return;
+    GList* children = gtk_container_get_children(GTK_CONTAINER(widget));
+    int i = 0;
+    for (GList* l = children; l; l = l->next, i++) {
+        if (i == 0 && GTK_IS_BOX(l->data)) {
+            gtk_widget_hide(GTK_WIDGET(l->data));
+        }
+        if (i == 1 && GTK_IS_BOX(l->data)) {
+            show_all_recursive(GTK_WIDGET(l->data));
+            hide_editor_extras(GTK_WIDGET(l->data));
+        }
+    }
+    g_list_free(children);
+}
 
 std::string RgbControllerGui::config_path() const {
     const char* xdg = std::getenv("XDG_CONFIG_HOME");
@@ -104,7 +175,7 @@ void RgbControllerGui::save_config() {
 
 RgbControllerGui::RgbControllerGui() {
     set_title("rgb-controller");
-    set_default_size(480, 300);
+    set_default_size(480, 400);
     set_border_width(12);
 
     current_rgba_.set("#FFFFFF");
@@ -115,11 +186,12 @@ RgbControllerGui::RgbControllerGui() {
     build_ui();
     connect_signals();
 
-    update_color_swatch();
-
     try {
         hid_ = std::make_unique<RgbControllerHid>(0x1A86, 0xFE07, 255);
         update_status("Device connected — Ready");
+        
+        current_rgba_ = confirmed_rgba_;
+        send_static_frame();
     } catch (const std::exception& e) {
         update_status("Device error: " + std::string(e.what()));
         Gtk::MessageDialog dialog(*this,
@@ -130,11 +202,17 @@ RgbControllerGui::RgbControllerGui() {
         dialog.run();
     }
 
-    send_static_frame();
     show_all_children();
+
+    Glib::signal_idle().connect_once([this]() {
+        show_editor_only(color_chooser_widget_->gobj());
+    });
 }
 
 RgbControllerGui::~RgbControllerGui() {
+    if (hid_) {
+        send_static_frame();
+    }
 }
 
 void RgbControllerGui::build_ui() {
@@ -142,37 +220,35 @@ void RgbControllerGui::build_ui() {
     main_box_.set_margin_start(4);
     main_box_.set_margin_end(4);
 
-    static_frame_.set_label("Color");
-    static_grid_.set_row_spacing(8);
-    static_grid_.set_column_spacing(10);
-    static_grid_.set_margin_start(10);
-    static_grid_.set_margin_end(10);
-    static_grid_.set_margin_top(6);
-    static_grid_.set_margin_bottom(8);
-
-    auto* color_label = Gtk::make_managed<Gtk::Label>("Pick:");
-    color_label->set_halign(Gtk::ALIGN_START);
-    static_grid_.attach(*color_label, 0, 0, 1, 1);
-
-    color_pick_button_.set_size_request(56, 36);
-    static_grid_.attach(color_pick_button_, 1, 0, 1, 1);
-
-    auto* bright_label_w = Gtk::make_managed<Gtk::Label>("Brightness:");
-    bright_label_w->set_halign(Gtk::ALIGN_START);
-    static_grid_.attach(*bright_label_w, 0, 1, 1, 1);
+    color_chooser_widget_ = Glib::wrap(gtk_color_chooser_widget_new());
+    color_chooser_widget_->set_hexpand(true);
+    color_chooser_widget_->set_vexpand(true);
+    
+    GtkColorChooser* chooser = GTK_COLOR_CHOOSER(color_chooser_widget_->gobj());
+    gtk_color_chooser_set_use_alpha(chooser, FALSE);
+    
+    GdkRGBA c_rgba;
+    c_rgba.red = confirmed_rgba_.get_red();
+    c_rgba.green = confirmed_rgba_.get_green();
+    c_rgba.blue = confirmed_rgba_.get_blue();
+    c_rgba.alpha = 1.0;
+    gtk_color_chooser_set_rgba(chooser, &c_rgba);
+    
+    main_box_.pack_start(*color_chooser_widget_, Gtk::PACK_EXPAND_WIDGET);
 
     brightness_adj_ = Gtk::Adjustment::create(255.0, 0.0, 255.0, 1.0, 10.0, 0.0);
     brightness_scale_.set_adjustment(brightness_adj_);
     brightness_scale_.set_digits(0);
     brightness_scale_.set_value_pos(Gtk::POS_RIGHT);
     brightness_scale_.set_hexpand(true);
-    static_grid_.attach(brightness_scale_, 1, 1, 1, 1);
-
-    test_leds_button_.set_label("Test LEDs");
-    static_grid_.attach(test_leds_button_, 0, 2, 2, 1);
-
-    static_frame_.add(static_grid_);
-    main_box_.pack_start(static_frame_, Gtk::PACK_SHRINK);
+    
+    auto* bright_label = Gtk::make_managed<Gtk::Label>("Brightness:");
+    bright_label->set_halign(Gtk::ALIGN_START);
+    
+    auto* brightness_box = Gtk::make_managed<Gtk::Box>(Gtk::ORIENTATION_HORIZONTAL, 10);
+    brightness_box->pack_start(*bright_label, Gtk::PACK_SHRINK);
+    brightness_box->pack_start(brightness_scale_, Gtk::PACK_EXPAND_WIDGET);
+    main_box_.pack_start(*brightness_box, Gtk::PACK_SHRINK);
 
     status_label_.set_markup("<b>Status:</b>");
     status_text_.set_text("Initializing…");
@@ -185,122 +261,45 @@ void RgbControllerGui::build_ui() {
 }
 
 void RgbControllerGui::connect_signals() {
-    color_pick_button_.signal_clicked().connect(
-        sigc::mem_fun(*this, &RgbControllerGui::on_color_pick));
+    GtkColorChooser* chooser = GTK_COLOR_CHOOSER(color_chooser_widget_->gobj());
+    g_signal_connect_swapped(chooser, "notify::rgba",
+        G_CALLBACK(+[](RgbControllerGui* self) {
+            self->on_color_changed();
+        }), this);
 
-    brightness_adj_->signal_value_changed().connect([this]() {
-        on_static_param_changed();
-    });
-
-    test_leds_button_.signal_clicked().connect(
-        sigc::mem_fun(*this, &RgbControllerGui::on_test_leds));
+    brightness_adj_->signal_value_changed().connect(
+        sigc::mem_fun(*this, &RgbControllerGui::on_brightness_changed));
 }
 
-void RgbControllerGui::on_color_pick() {
-    Gdk::RGBA before = confirmed_rgba_;
-
-    Gtk::ColorChooserDialog dialog("Pick Color");
-    dialog.set_transient_for(*this);
-    dialog.set_modal(true);
-    dialog.set_rgba(before);
-
-    dialog.property_rgba().signal_changed().connect(
-        [this, &dialog]() {
-            current_rgba_ = dialog.get_rgba();
-            update_color_swatch();
-            send_static_frame();
-        });
-
-    int result = dialog.run();
-    dialog.hide();
-
-    if (result == Gtk::RESPONSE_OK) {
-        confirmed_rgba_ = dialog.get_rgba();
-        current_rgba_   = confirmed_rgba_;
-        save_config();
-    } else {
-        current_rgba_ = before;
-    }
-
-    update_color_swatch();
+void RgbControllerGui::on_color_changed() {
+    if (!color_chooser_widget_) return;
+    
+    GtkColorChooser* chooser = GTK_COLOR_CHOOSER(color_chooser_widget_->gobj());
+    GdkRGBA c_rgba;
+    gtk_color_chooser_get_rgba(chooser, &c_rgba);
+    current_rgba_.set_rgba(c_rgba.red, c_rgba.green, c_rgba.blue, 1.0);
+    confirmed_rgba_ = current_rgba_;
+    save_config();
     send_static_frame();
 }
 
-void RgbControllerGui::update_color_swatch() {
-    auto ctx = color_pick_button_.get_style_context();
-    static Glib::RefPtr<Gtk::CssProvider> s_provider;
-    if (!s_provider) {
-        s_provider = Gtk::CssProvider::create();
-        ctx->add_provider(s_provider, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-    }
-
-    char css[128];
-    std::snprintf(css, sizeof(css),
-                  "* { background-color: rgb(%d,%d,%d); }",
-                  static_cast<int>(current_rgba_.get_red()   * 255.0 + 0.5),
-                  static_cast<int>(current_rgba_.get_green() * 255.0 + 0.5),
-                  static_cast<int>(current_rgba_.get_blue()  * 255.0 + 0.5));
-    s_provider->load_from_data(css);
-}
-
-void RgbControllerGui::on_static_param_changed() {
-    auto b = static_cast<uint8_t>(brightness_adj_->get_value());
-    send_brightness_safe(b);
+void RgbControllerGui::on_brightness_changed() {
     send_static_frame();
 }
 
 void RgbControllerGui::send_static_frame() {
     if (!hid_) return;
 
-    uint8_t r = static_cast<uint8_t>(current_rgba_.get_red()   * 255.0 + 0.5);
-    uint8_t g = static_cast<uint8_t>(current_rgba_.get_green() * 255.0 + 0.5);
-    uint8_t b = static_cast<uint8_t>(current_rgba_.get_blue()  * 255.0 + 0.5);
+    uint8_t brightness = static_cast<uint8_t>(brightness_adj_->get_value());
+    double scale = brightness / 255.0;
+    
+    uint8_t r = static_cast<uint8_t>(current_rgba_.get_red()   * 255.0 * scale + 0.5);
+    uint8_t g = static_cast<uint8_t>(current_rgba_.get_green() * 255.0 * scale + 0.5);
+    uint8_t b = static_cast<uint8_t>(current_rgba_.get_blue()  * 255.0 * scale + 0.5);
 
     LedFrame frame{};
     frame.fill(ColorRgb{r, g, b});
     send_frame_safe(frame);
-}
-
-bool RgbControllerGui::on_static_refresh_tick() {
-    if (test_tick_conn_.connected()) {
-        return true;
-    }
-    send_static_frame();
-    return true;
-}
-
-void RgbControllerGui::on_test_leds() {
-    if (!hid_) return;
-
-    test_tick_conn_.disconnect();
-
-    test_led_index_ = 0;
-    update_status("LED test running — watch the strip (LED 1/63)");
-
-    test_tick_conn_ = Glib::signal_timeout().connect(
-        sigc::mem_fun(*this, &RgbControllerGui::on_test_leds_tick),
-        400);
-}
-
-bool RgbControllerGui::on_test_leds_tick() {
-    if (test_led_index_ >= static_cast<int>(kLedCount)) {
-        test_tick_conn_.disconnect();
-        send_static_frame();
-        update_status("LED test finished — 63 LEDs checked");
-        return false;
-    }
-
-    LedFrame frame{};
-    frame[static_cast<std::size_t>(test_led_index_)] = ColorRgb{255, 0, 0};
-    send_frame_safe(frame);
-
-    char buf[64];
-    std::snprintf(buf, sizeof(buf), "LED test: LED %d / %zu  (watch the strip)",
-                  test_led_index_ + 1, kLedCount);
-    update_status(buf);
-
-    ++test_led_index_;
-    return true;
 }
 
 void RgbControllerGui::update_status(const std::string& msg) {
@@ -314,12 +313,6 @@ bool RgbControllerGui::send_frame_safe(const LedFrame& frame) {
     std::lock_guard<std::mutex> lock(hid_mutex_);
     if (!hid_) return false;
     return hid_->sendFrame(frame);
-}
-
-bool RgbControllerGui::send_brightness_safe(uint8_t brightness) {
-    std::lock_guard<std::mutex> lock(hid_mutex_);
-    if (!hid_) return false;
-    return hid_->setBrightness(brightness);
 }
 
 } // namespace rgb_controller
