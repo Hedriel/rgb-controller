@@ -164,9 +164,3 @@ Check that:
 GPL-3.0
 
 ---
-
-## Credits
-
-- Hardware protocol: ROBOBLOQ / DX-LIGHT ecosystem
-- HID communication: hidapi library
-- GUI: GTK3 / gtkmm
