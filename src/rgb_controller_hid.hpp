@@ -1,6 +1,6 @@
 #pragma once
 
-#include "src/quiklight_layout.hpp"
+#include "src/rgb_controller_layout.hpp"
 
 #include <cstdint>
 #include <string>
@@ -8,7 +8,7 @@
 
 #include <hidapi/hidapi.h>
 
-namespace wl_quiklight {
+namespace rgb_controller {
 
 struct HidDeviceInfo {
     std::string path;
@@ -19,20 +19,21 @@ struct HidDeviceInfo {
     std::string serial;
 };
 
-class QuiklightHid {
+class RgbControllerHid {
 public:
-    QuiklightHid(uint16_t vid,
+    RgbControllerHid(uint16_t vid,
                  uint16_t pid,
                  uint8_t brightness,
                  const std::string& forced_path = {});
-    ~QuiklightHid();
+    ~RgbControllerHid();
 
-    QuiklightHid(const QuiklightHid&) = delete;
-    QuiklightHid& operator=(const QuiklightHid&) = delete;
+    RgbControllerHid(const RgbControllerHid&) = delete;
+    RgbControllerHid& operator=(const RgbControllerHid&) = delete;
 
     static std::vector<HidDeviceInfo> listDevices();
 
     bool sendFrame(const LedFrame& frame);
+    bool setBrightness(uint8_t value);
 
 private:
     void open();
@@ -58,4 +59,4 @@ private:
     mutable uint8_t next_msg_id_{1};
 };
 
-} // namespace wl_quiklight
+} // namespace rgb_controller

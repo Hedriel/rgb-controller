@@ -1,8 +1,8 @@
-# hypr-quiklight
+# rgb-controller
 
-A lightweight Linux/Wayland ambilight driver for **ROBOBLOQ / DX-LIGHT Quiklight** USB LED strips.
+A lightweight Linux/Wayland ambilight driver for **ROBOBLOQ / DX-LIGHT RGB Controller** USB LED strips.
 
-`hypr-quiklight` captures the edges of a Wayland output, computes average colors in real time, post-processes them for more vivid rendering, and sends them directly to the Quiklight HID controller.
+`rgb-controller` captures the edges of a Wayland output, computes average colors in real time, post-processes them for more vivid rendering, and sends them directly to the RGB Controller HID device.
 
 This project was built to provide a native Linux alternative to the original vendor app, with a focus on:
 
@@ -18,7 +18,7 @@ This project was built to provide a native Linux alternative to the original ven
 ## Features
 
 - Native **Wayland** screen-edge capture
-- Direct **HID** communication with the Quiklight controller
+- Direct **HID** communication with the RGB Controller
 - Automatic detection of the correct HID device
 - Real-time ambilight rendering
 - Configurable:
@@ -39,7 +39,7 @@ This project was built to provide a native Linux alternative to the original ven
 
 ## Supported hardware
 
-This project is designed for the Quiklight controller identified as:
+This project is designed for the RGB Controller identified as:
 
 - **Vendor ID:** `0x1A86`
 - **Product ID:** `0xFE07`
@@ -79,7 +79,7 @@ This project was primarily tuned and validated on **Hyprland**.
 
 ## How it works
 
-`hypr-quiklight`:
+`rgb-controller`:
 
 1. connects to the Wayland compositor
 2. captures a selected output
@@ -92,7 +92,7 @@ This project was primarily tuned and validated on **Hyprland**.
    - hue shift
    - smoothing
 6. remaps the logical zones to the physical strip layout
-7. sends the final frame to the Quiklight HID controller
+7. sends the final frame to the RGB Controller HID device
 
 ---
 
@@ -104,13 +104,19 @@ This project was primarily tuned and validated on **Hyprland**.
 ├── README.md
 ├── protocols/
 ├── src/
+│   ├── main.cpp
+│   ├── gui.cpp
+│   ├── gui.hpp
+│   ├── rgb_controller_hid.cpp
+│   ├── rgb_controller_hid.hpp
+│   └── rgb_controller_layout.hpp
 ├── wayland/
 └── dist/
     ├── install.sh
     ├── uninstall.sh
-    ├── hypr-quiklight.service
-    ├── hypr-quiklight-launcher
-    ├── 99-quiklight.rules
+    ├── rgb-controller.service
+    ├── rgb-controller-launcher
+    ├── 99-rgb-controller.rules
     └── config.ini.example
 ```
 
@@ -152,25 +158,25 @@ make -j$(nproc)
 List HID devices:
 
 ```bash
-./hypr-quiklight --list-devices
+./rgb-controller --list-devices
 ```
 
 Test the strip with a static random sequence:
 
 ```bash
-./hypr-quiklight --random-sequence
+./rgb-controller --random-sequence
 ```
 
 Test live ambilight manually:
 
 ```bash
-./hypr-quiklight -o yourmonitor
+./rgb-controller -o yourmonitor
 ```
 
 Or with an explicit HID path:
 
 ```bash
-./hypr-quiklight --device /dev/hidraw0 -o yourmonitor
+./rgb-controller --device /dev/hidraw0 -o yourmonitor
 ```
 
 ---
@@ -189,7 +195,7 @@ Then enable the service:
 
 ```bash
 systemctl --user daemon-reload
-systemctl --user enable --now hypr-quiklight.service
+systemctl --user enable --now rgb-controller.service
 ```
 
 ---
@@ -203,15 +209,15 @@ systemctl --user enable --now hypr-quiklight.service
 If needed, stop and disable the user service manually:
 
 ```bash
-systemctl --user stop hypr-quiklight.service
-systemctl --user disable hypr-quiklight.service
+systemctl --user stop rgb-controller.service
+systemctl --user disable rgb-controller.service
 ```
 
 ---
 
 ## udev permissions
 
-The Quiklight controller is a HID device and needs appropriate permissions.
+The RGB Controller is a HID device and needs appropriate permissions.
 
 This project installs a `udev` rule similar to:
 
@@ -235,7 +241,7 @@ Then unplug and replug the USB controller.
 The user config file is located at:
 
 ```text
-~/.config/hypr-quiklight/config.ini
+~/.config/rgb-controller/config.ini
 ```
 
 Example (using Xiaomi Monitor) :
@@ -388,7 +394,7 @@ min_saturation=0.20
 To verify strip order and color correctness:
 
 ```bash
-hypr-quiklight --random-sequence
+rgb-controller --random-sequence
 ```
 
 This displays a static random LED pattern and prints the corresponding sequence in the terminal.
@@ -407,19 +413,19 @@ This mode is useful for:
 You can run the program without the service:
 
 ```bash
-hypr-quiklight -o yourmonitor
+rgb-controller -o yourmonitor
 ```
 
 With explicit device path:
 
 ```bash
-hypr-quiklight --device /dev/hidraw0 -o yourmonitor
+rgb-controller --device /dev/hidraw0 -o yourmonitor
 ```
 
 With custom color tuning:
 
 ```bash
-hypr-quiklight -o yourmonitor \
+rgb-controller -o yourmonitor \
   --saturation-boost 1.70 \
   --value-boost 1.18 \
   --gamma 0.90 \
@@ -514,9 +520,9 @@ Also use `--random-sequence` to validate the physical mapping.
 If the compositor or shell crashes, stop the service, unplug/replug the HID controller if necessary, then restart the service:
 
 ```bash
-systemctl --user stop hypr-quiklight.service
-pkill -f hypr-quiklight
-systemctl --user start hypr-quiklight.service
+systemctl --user stop rgb-controller.service
+pkill -f rgb-controller
+systemctl --user start rgb-controller.service
 ```
 
 ---
@@ -526,7 +532,7 @@ systemctl --user start hypr-quiklight.service
 - This project depends on compositor-specific Wayland capture support.
 - It is not a universal Wayland ambilight solution for all desktops.
 - Compatibility is best on compositors exposing the required capture protocols.
-- HID behavior may vary slightly across Quiklight firmware revisions.
+- HID behavior may vary slightly across RGB Controller firmware revisions.
 
 ---
 
@@ -544,9 +550,9 @@ If you experience instability:
 
 ## Why this project exists
 
-The original Quiklight software is built around an Electron-based desktop application and is not a clean native Linux solution.
+The original RGB Controller software is built around an Electron-based desktop application and is not a clean native Linux solution.
 
-`hypr-quiklight` provides:
+`rgb-controller` provides:
 
 - a native Linux implementation
 - direct Wayland capture

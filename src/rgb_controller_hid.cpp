@@ -1,4 +1,4 @@
-#include "src/quiklight_hid.hpp"
+#include "src/rgb_controller_hid.hpp"
 
 #include <algorithm>
 #include <codecvt>
@@ -10,7 +10,7 @@
 #include <stdexcept>
 #include <vector>
 
-namespace wl_quiklight {
+namespace rgb_controller {
 namespace {
 
 std::string wide_to_utf8(const wchar_t* w) {
@@ -43,7 +43,7 @@ bool contains_case_insensitive(const std::string& haystack, const std::string& n
 
 } // namespace
 
-std::vector<HidDeviceInfo> QuiklightHid::listDevices() {
+std::vector<HidDeviceInfo> RgbControllerHid::listDevices() {
     std::vector<HidDeviceInfo> out;
 
     hid_device_info* head = hid_enumerate(0x0, 0x0);
@@ -63,7 +63,7 @@ std::vector<HidDeviceInfo> QuiklightHid::listDevices() {
     return out;
 }
 
-QuiklightHid::QuiklightHid(uint16_t vid,
+RgbControllerHid::RgbControllerHid(uint16_t vid,
                            uint16_t pid,
                            uint8_t brightness,
                            const std::string& forced_path)
@@ -72,14 +72,14 @@ QuiklightHid::QuiklightHid(uint16_t vid,
     initialize();
 }
 
-QuiklightHid::~QuiklightHid() {
+RgbControllerHid::~RgbControllerHid() {
     if (dev_) {
         hid_close(dev_);
         dev_ = nullptr;
     }
 }
 
-void QuiklightHid::open() {
+void RgbControllerHid::open() {
     if (!forced_path_.empty()) {
         dev_ = hid_open_path(forced_path_.c_str());
         if (!dev_) {
@@ -120,29 +120,34 @@ void QuiklightHid::open() {
     }
 }
 
-bool QuiklightHid::sendFrame(const LedFrame& frame) {
+bool RgbControllerHid::setBrightness(uint8_t value) {
+    brightness_ = value;
+    return sendPacket(buildSetBrightness(value));
+}
+
+bool RgbControllerHid::sendFrame(const LedFrame& frame) {
     const auto packet = buildSyncScreenPacket(frame);
     return sendPacket(packet);
 }
 
-void QuiklightHid::initialize() {
+void RgbControllerHid::initialize() {
     if (!sendPacket(buildSetOpenUrl())) {
-        throw std::runtime_error("Failed to initialize Quiklight: setOpenUrl");
+        throw std::runtime_error("Failed to initialize RGB Controller: setOpenUrl");
     }
     if (!sendPacket(buildSetBrightness(brightness_))) {
-        throw std::runtime_error("Failed to initialize Quiklight: setBrightness");
+        throw std::runtime_error("Failed to initialize RGB Controller: setBrightness");
     }
     if (!sendPacket(buildSetSectionLedDefault())) {
-        throw std::runtime_error("Failed to initialize Quiklight: setSectionLED");
+        throw std::runtime_error("Failed to initialize RGB Controller: setSectionLED");
     }
 
     LedFrame black{};
     if (!sendFrame(black)) {
-        throw std::runtime_error("Failed to initialize Quiklight: initial black frame");
+        throw std::runtime_error("Failed to initialize RGB Controller: initial black frame");
     }
 }
 
-bool QuiklightHid::sendPacket(const std::vector<uint8_t>& packet) {
+bool RgbControllerHid::sendPacket(const std::vector<uint8_t>& packet) {
     std::size_t offset = 0;
 
     while (offset < packet.size()) {
@@ -164,7 +169,7 @@ bool QuiklightHid::sendPacket(const std::vector<uint8_t>& packet) {
     return true;
 }
 
-std::vector<uint8_t> QuiklightHid::buildSimpleRBCommand(uint8_t msg_id,
+std::vector<uint8_t> RgbControllerHid::buildSimpleRBCommand(uint8_t msg_id,
                                                         uint8_t action,
                                                         const uint8_t* payload,
                                                         std::size_t payload_len) const {
@@ -186,22 +191,22 @@ std::vector<uint8_t> QuiklightHid::buildSimpleRBCommand(uint8_t msg_id,
     return out;
 }
 
-std::vector<uint8_t> QuiklightHid::buildSetOpenUrl() const {
+std::vector<uint8_t> RgbControllerHid::buildSetOpenUrl() const {
     const uint8_t payload[1] = {0};
     return buildSimpleRBCommand(next_msg_id_++, 147, payload, sizeof(payload));
 }
 
-std::vector<uint8_t> QuiklightHid::buildSetBrightness(uint8_t value) const {
+std::vector<uint8_t> RgbControllerHid::buildSetBrightness(uint8_t value) const {
     const uint8_t payload[1] = {value};
     return buildSimpleRBCommand(next_msg_id_++, 135, payload, sizeof(payload));
 }
 
-std::vector<uint8_t> QuiklightHid::buildSetSectionLedDefault() const {
-    const uint8_t payload[10] = {1, 85, 85, 85, 63, 64, 0, 0, 0, 254};
+std::vector<uint8_t> RgbControllerHid::buildSetSectionLedDefault() const {
+    const uint8_t payload[10] = {1, 85, 85, 85, 65, 66, 0, 0, 0, 254};
     return buildSimpleRBCommand(next_msg_id_++, 134, payload, sizeof(payload));
 }
 
-std::vector<uint8_t> QuiklightHid::buildSyncScreenPacket(const LedFrame& frame) const {
+std::vector<uint8_t> RgbControllerHid::buildSyncScreenPacket(const LedFrame& frame) const {
     const std::size_t payload_len = kLedCount * 5;
     const std::size_t total_len = 2 + 2 + 1 + 1 + payload_len + 1;
 
@@ -228,4 +233,4 @@ std::vector<uint8_t> QuiklightHid::buildSyncScreenPacket(const LedFrame& frame) 
     return out;
 }
 
-} // namespace wl_quiklight
+} // namespace rgb_controller
